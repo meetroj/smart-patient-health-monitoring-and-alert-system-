@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patient Monitor</title>
+<link rel="icon" type="image/png" href="logo-icon.png">
+<link rel="apple-touch-icon" href="logo-icon.png">
+<meta name="theme-color" content="#008281">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+:root{
+  /* brand (logo): teal #008281, navy #112744 */
+  --bg:#f4f6f8; --card:#fff; --line:#e6eaee; --text:#112744; --muted:#5f6b80; --faint:#94a3b8;
+  --teal:#008281; --teal-dark:#006a69; --teal-soft:#e5f3f3; --teal-line:#008281;
+  --red:#e11d48; --red-soft:#fee2e2; --red-text:#b91c1c;
+  --amber-bg:#fff4e2; --amber-line:#f7c98b; --amber-text:#8a4b00; --amber-pill:#fde8c8;
+  --green-bg:#ecfdf5; --green-line:#a7f3d0; --green-text:#047857;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.hidden{display:none!important}
+button{font:inherit;cursor:pointer}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--teal-line);outline-offset:2px}
+
+/* ---------- sign in ---------- */
+.auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.auth{width:100%;max-width:380px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(15,23,42,.06)}
+.auth h2{margin:22px 0 18px;font-size:20px}
+.auth label{display:block;font-size:14px;font-weight:500;margin-bottom:6px}
+.auth input{margin-bottom:14px}
+.auth-links{display:flex;justify-content:space-between;margin-top:10px}
+
+/* ---------- shared ---------- */
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;color:var(--text);letter-spacing:-.2px}
+.brand .logo{width:40px;height:40px;flex:none}
+input{width:100%;padding:11px 12px;border:1px solid #d5dbe1;border-radius:9px;font:inherit;color:var(--text);background:#fff}
+.btn{width:100%;padding:12px 16px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:600}
+.btn:hover{background:var(--teal-dark)}
+.btn.ghost{background:#fff;color:var(--text);border:1px solid #d5dbe1;margin-top:10px}
+.btn.ghost:hover{background:#f8fafc}
+.link{background:none;border:0;padding:4px 0;color:var(--muted);font-size:13px;text-decoration:underline}
+.err{color:var(--red-text);font-size:13px;min-height:18px;margin-bottom:8px}
+
+/* ---------- layout ---------- */
+.layout{display:grid;grid-template-columns:254px 1fr;min-height:100vh}
+.sidebar{background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:26px 10px 20px;position:sticky;top:0;height:100vh}
+.sidebar .brand{padding:0 12px 26px}
+.nav{display:flex;align-items:center;gap:14px;padding:13px 14px;margin-bottom:6px;border-radius:10px;color:#334155;text-decoration:none;font-weight:500}
+.nav:hover{background:#f6f8fa}
+.nav.active{background:var(--teal-soft);color:var(--teal)}
+.nav svg.i{width:22px;height:22px}
+.who-box{display:flex;align-items:center;gap:12px}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--teal-soft);color:var(--teal);display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.user-text{min-width:0;display:flex;flex-direction:column;font-size:13px}
+.user-text strong{font-size:14px}
+.user-text span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signout{display:flex;align-items:center;background:none;border:1px solid var(--line);padding:8px;color:#334155;border-radius:9px;margin-left:4px}
+.signout:hover{background:var(--red-soft);color:var(--red-text);border-color:#fecaca}
+
+main{padding:26px 28px 20px;min-width:0}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:22px}
+.top h1{margin:0;font-size:32px;font-weight:700;letter-spacing:-.5px}
+.top p{margin:4px 0 0;color:var(--muted);font-size:17px}
+.top-right{display:flex;align-items:center;gap:22px}
+.clock{display:flex;align-items:center;gap:12px;font-size:14px;color:#334155;padding-right:22px;border-right:1px solid var(--line)}
+.clock div{display:flex;flex-direction:column}
+.clock svg.i{width:24px;height:24px}
+
+.banner{display:flex;align-items:center;gap:16px;padding:14px 20px;border-radius:12px;border:1px solid;margin-bottom:22px}
+.banner svg.i{width:34px;height:34px;padding-right:14px;border-right:1px solid currentColor;box-sizing:content-box;opacity:.85}
+.banner strong{display:block;font-size:16px}
+.banner span{font-size:14px;color:#334155}
+.banner.warn{background:var(--amber-bg);border-color:var(--amber-line);color:var(--amber-text)}
+.banner.good{background:var(--green-bg);border-color:var(--green-line);color:var(--green-text)}
+.banner.bad{background:var(--red-soft);border-color:#fecaca;color:var(--red-text)}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;scroll-margin-top:16px}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.card-title{display:flex;align-items:center;gap:12px;font-weight:600;font-size:18px}
+.card-unit{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:14px}
+.card-unit svg.i{width:20px;height:20px}
+
+.vitals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-bottom:22px}
+.vital{display:grid;grid-template-columns:160px minmax(0,1fr);gap:10px;align-items:center}
+.big{font-size:46px;font-weight:700;letter-spacing:-1px;line-height:1.1}
+.big small{font-size:22px;font-weight:600;color:#475569;margin-left:10px;letter-spacing:0}
+.big.dim{color:#1e293b}
+.temp-val{color:var(--teal)}
+.sub{margin-top:12px;font-weight:600;color:#475569;font-size:17px}
+.mini{height:150px;position:relative}
+.heart-ico{color:var(--red)}
+.heart-ico svg.i{fill:var(--red);stroke:var(--red);width:28px;height:28px}
+.heart-ico.on svg.i{animation:beat .8s infinite}
+@keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+.temp-ico svg.i{color:var(--teal);width:28px;height:28px}
+
+.pill{display:inline-block;margin-top:14px;padding:6px 16px;border-radius:999px;font-size:14px;font-weight:600;background:#e9eef3;color:#334155}
+.pill.ok{background:#dcfce7;color:#15803d}
+.pill.warn{background:#fef3c7;color:#b45309}
+.pill.bad{background:var(--red-soft);color:var(--red-text)}
+.pill.sim{background:var(--amber-pill);color:var(--amber-text)}
+
+.lower{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:20px}
+.side-col{display:flex;flex-direction:column;gap:20px}
+.tabs{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.tab{background:#fff;border:0;padding:9px 18px;font-size:14px;color:#334155}
+.tab+.tab{border-left:1px solid var(--line)}
+.tab.active{background:var(--teal);color:#fff;font-weight:500}
+.hist{height:300px;position:relative;margin-top:10px}
+.empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none}
+.empty .ico{width:54px;height:54px;border-radius:50%;background:#eef1f4;display:flex;align-items:center;justify-content:center;color:#475569;margin-bottom:14px}
+.empty strong{font-size:18px}
+.empty span{color:var(--muted);font-size:14px;margin-top:6px}
+.legend{display:flex;justify-content:center;gap:26px;margin-top:12px;font-size:14px;color:#334155}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:8px;vertical-align:-1px}
+
+.card p.desc{margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.45}
+.field-label{display:block;font-size:14px;font-weight:500;margin-bottom:8px}
+.input-ico{position:relative;margin-bottom:12px}
+.input-ico svg.i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.input-ico input{padding-left:44px}
+.msg{font-size:13px;min-height:18px;margin-top:8px}
+.contacts-title{font-size:13px;font-weight:600;color:var(--muted);margin-top:10px;text-transform:uppercase;letter-spacing:.4px}
+.contacts{list-style:none;margin:8px 0 0;padding:0}
+.contacts li{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line);font-size:14px}
+.contacts li:first-child{border-top:1px solid var(--line)}
+.contacts li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contacts li svg.i{color:var(--teal);width:18px;height:18px}
+.remove{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:2px 9px;border-radius:6px}
+.remove:hover{background:var(--red-soft);color:var(--red-text)}
+.contacts-empty{color:var(--faint);font-size:14px;margin-top:8px}
+.msg.ok{color:var(--green-text)}
+.msg.bad{color:var(--red-text)}
+
+.drow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:15px}
+.drow span{color:#334155}
+.drow strong{display:flex;align-items:center;gap:12px;font-weight:600;min-width:150px}
+.drow strong svg.i{color:var(--muted)}
+.drow.sep{border-top:1px solid var(--line);margin-top:10px;padding-top:16px}
+
+footer{text-align:right;color:var(--muted);font-size:12px;margin-top:22px}
+
+/* ---------- small screens ---------- */
+@media (max-width:1100px){
+  .vitals,.lower{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:860px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:12px 16px;border-right:0;border-bottom:1px solid var(--line)}
+  .sidebar .brand{padding:0;font-size:18px;flex:1}
+  .sidebar nav{display:none}
+  .top-right{flex-wrap:wrap;gap:14px}
+  main{padding:18px 16px}
+  .top{flex-direction:column}
+  .top h1{font-size:26px}
+  .vital{grid-template-columns:minmax(0,1fr)}
+  .clock{border-right:0;padding-right:0}
+  .tabs{width:100%}
+  .tab{flex:1;padding:9px 6px}
+  .card-head{flex-wrap:wrap;gap:12px}
+  footer{text-align:center}
+}
+</style>
+</head>
+
+<body>
+
+<!-- icons (lucide/feather style) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
+  <symbol id="i-bars" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></symbol>
+  <symbol id="i-thermo" viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+</svg>
+
+<!-- ================= SIGN IN ================= -->
+<div class="auth-wrap hidden" id="authBox">
+  <div class="auth">
+    <div class="brand"><img class="logo" src="logo-icon.png" alt="">Patient Monitor</div>
+    <h2 id="authTitle">Sign in</h2>
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Min 6 characters" autocomplete="current-password">
+    <div class="err" id="authErr"></div>
+    <button class="btn" id="authBtn">Sign in</button>
+    <button class="btn ghost" id="googleBtn">Sign in with Google</button>
+    <div class="auth-links">
+      <button class="link" id="authToggle">New here? Create account</button>
+      <button class="link" id="resetBtn">Forgot password?</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= DASHBOARD ================= -->
+<div class="layout hidden" id="app">
+
+  <aside class="sidebar">
+    <div class="brand"><img class="logo" src="logo-icon.png" alt="">Patient Monitor</div>
+    <nav>
+      <a class="nav active" href="#top"><svg class="i"><use href="#i-home"/></svg>Overview</a>
+    </nav>
+  </aside>
+
+  <main id="top">
+    <header class="top">
+      <div>
+        <h1>Monitoring overview</h1>
+        <p>ESP8266 Cloud Health Dashboard</p>
+      </div>
+      <div class="top-right">
+        <div class="clock"><svg class="i"><use href="#i-calendar"/></svg><div><span id="dateTxt"></span><span id="timeTxt"></span></div></div>
+        <div class="who-box">
+          <div class="avatar" id="avatar">?</div>
+          <div class="user-text"><strong id="userName"></strong><span id="who"></span></div>
+          <button class="signout" id="signOut" aria-label="Sign out" title="Sign out"><svg class="i"><use href="#i-logout"/></svg></button>
+        </div>
+      </div>
+    </header>
+
+    <div class="banner warn" id="connBanner">
+      <svg class="i"><use id="connIcon" href="#i-wifi-off"/></svg>
+      <div><strong id="connTitle">Connecting…</strong><span id="connSub">Waiting for a new reading.</span></div>
+    </div>
+
+    <div class="banner bad hidden" id="alert">
+      <svg class="i"><use href="#i-alert"/></svg>
+      <div><strong>Health alert</strong><span id="alertTxt"></span></div>
+    </div>
+
+    <section class="vitals">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title"><span class="heart-ico" id="heartIcon"><svg class="i"><use href="#i-heart"/></svg></span>Heart rate</div>
+          <div class="card-unit"><svg class="i"><use href="#i-activity"/></svg>BPM</div>
+        </div>
+        <div class="vital">
+          <div>
+            <div class="big dim"><span id="bpm">--</span><small>BPM</small></div>
+            <span class="pill" id="bpmStatus">No signal</span>
+          </div>
+          <div class="mini"><canvas id="hrChart" aria-label="Heart rate, last 60 seconds" role="img"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title"><span class="temp-ico"><svg class="i"><use href="#i-thermo"/></svg></span>Body temperature</div>
+          <div class="card-unit"><svg class="i"><use href="#i-thermo"/></svg>&deg;C</div>
+        </div>
+        <div class="vital">
+          <div>
+            <div class="big temp-val"><span id="temperature">--</span><small>&deg;C</small></div>
+            <span class="pill" id="tempStatus">--</span>
+            <div class="sub"><span id="tempF">--</span> &deg;F</div>
+          </div>
+          <div class="mini"><canvas id="tmpChart" aria-label="Temperature, last 60 seconds" role="img"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lower">
+      <div class="card" id="history-card">
+        <div class="card-head">
+          <div class="card-title">Reading history</div>
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-mode="all" role="tab">All readings</button>
+            <button class="tab" data-mode="hr" role="tab">Heart rate</button>
+            <button class="tab" data-mode="temp" role="tab">Temperature</button>
+          </div>
+        </div>
+        <div class="hist">
+          <canvas id="histChart" aria-label="Reading history chart" role="img"></canvas>
+          <div class="empty hidden" id="histEmpty">
+            <div class="ico"><svg class="i"><use href="#i-bars"/></svg></div>
+            <strong>No readings yet</strong>
+            <span>Readings will appear when your device connects.</span>
+          </div>
+        </div>
+        <div class="legend">
+          <span id="legHr"><i style="background:#e11d48"></i>Heart rate (BPM)</span>
+          <span id="legTmp"><i style="background:#008281"></i>Temperature (&deg;C)</span>
+        </div>
+      </div>
+
+      <div class="side-col">
+        <div class="card" id="contact-card">
+          <div class="card-head"><div class="card-title"><svg class="i" style="color:var(--teal);width:26px;height:26px"><use href="#i-mail"/></svg>Emergency contact</div></div>
+          <p class="desc">Email alerts for configured heart rate and temperature thresholds.</p>
+          <label class="field-label" for="emerg">Email address</label>
+          <div class="input-ico"><svg class="i"><use href="#i-mail"/></svg><input id="emerg" type="email" placeholder="emergency@example.com" autocomplete="email"></div>
+          <button class="btn" id="saveEmerg">Save contact</button>
+          <div class="msg" id="emergMsg"></div>
+          <div class="contacts-title">Saved contacts</div>
+          <ul class="contacts" id="contactList"></ul>
+          <div class="contacts-empty" id="contactEmpty">No contacts saved yet.</div>
+        </div>
+
+        <div class="card" id="device-card">
+          <div class="card-head"><div class="card-title"><svg class="i" style="color:var(--teal);width:26px;height:26px"><use href="#i-gear"/></svg>Device details</div></div>
+          <div class="drow"><span>Wi-Fi signal</span><strong><svg class="i"><use href="#i-wifi"/></svg><span id="rssi">--</span></strong></div>
+          <div class="drow"><span>Device IP</span><strong><svg class="i"><use href="#i-share"/></svg><span id="ip">--</span></strong></div>
+          <div class="drow"><span>Uptime</span><strong><svg class="i"><use href="#i-clock"/></svg><span id="uptime">--</span></strong></div>
+          <div class="drow sep"><span>Last received device data</span><strong><svg class="i"><use href="#i-calendar"/></svg><span id="updated">--</span></strong></div>
+        </div>
+      </div>
+    </section>
+
+    <footer>ESP8266 Patient Monitoring System &bull; For demonstration only &bull; Not a medical device</footer>
+  </main>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getDatabase, ref, onValue, push, remove, query, limitToLast } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyB65xdbKWK3eN2Bne-KG4I570cgtMuKA3U",
+  authDomain: "patient-76db1.firebaseapp.com",
+  projectId: "patient-76db1",
+  appId: "1:1002327401857:web:2f13f89620fe479a2b3480",
+  databaseURL: "https://patient-76db1-default-rtdb.firebaseio.com"
+});
+const db   = getDatabase(app);
+const auth = getAuth(app);
+const $ = (id) => document.getElementById(id);
+
+const STALE_MS      = 15000;   // ts purana ho to device OFFLINE
+const LIVE_WINDOW_S = 60;      // vitals cards ke chhote charts
+const HISTORY_ROWS  = 720;     // worker 1 row/min likhta hai -> ~12 ghante
+
+let last = null, liveBuf = [], histRows = [], histMode = "all", charts = null;
+
+// ---------- helpers ----------
+const nice = (s) => s ? s.charAt(0) + s.slice(1).toLowerCase() : "--";
+const hhmm = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+function pillClass(s){
+  if(s==="NORMAL") return "pill ok";
+  if(!s || s==="NO SIGNAL" || s==="NO SENSOR") return "pill";
+  if(s==="ELEVATED" || s==="LOW") return "pill warn";
+  return "pill bad";
+}
+function fmtUptime(sec){
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  return h+"h "+m+"m "+s+"s";
+}
+function setText(id, v){ $(id).innerText = v; }
+
+// ---------- charts ----------
+const GRID = "#eef1f4", TICK = "#94a3b8", RED = "#e11d48", TEAL = "#008281";   // TEAL = logo colour
+function lineChart(canvas, datasets, yMin, yMax, yStep, x, tipTitle){
+  return new Chart(canvas, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: tipTitle } } },
+      elements: { point: { radius: 0, hoverRadius: 4 }, line: { borderWidth: 2, tension: 0.3 } },
+      scales: {
+        x: { type: "linear", grid: { color: GRID }, border: { display: false }, ...x },
+        y: { min: yMin, max: yMax, grid: { color: GRID }, border: { display: false },
+             ticks: { color: TICK, font: { size: 11 }, stepSize: yStep } }
+      }
+    }
+  });
+}
+function makeCharts(){
+  const ds = (c) => ({ data: [], borderColor: c, backgroundColor: c });
+  const secAgo = () => ({ min: -LIVE_WINDOW_S, max: 0,
+    ticks: { color: TICK, font: { size: 11 }, stepSize: 15, callback: (v) => Math.abs(v) + "s" } });
+  const agoTip = (items) => Math.round(Math.abs(items[0].parsed.x)) + "s ago";
+  return {
+    hr:   lineChart($("hrChart"),  [ds(RED)],  0, 180, 60, secAgo(), agoTip),
+    tmp:  lineChart($("tmpChart"), [ds(TEAL)], 34, 42, 2,  secAgo(), agoTip),
+    hist: lineChart($("histChart"), [ds(RED), ds(TEAL)], 0, 180, 60,
+            { ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 6, callback: (v) => hhmm(v) } },
+            (items) => new Date(items[0].parsed.x).toLocaleString())
+  };
+}
+
+function pushLive(d){
+  if(!d || !d.ts) return;
+  if(liveBuf.length && liveBuf[liveBuf.length-1].ts === d.ts) return;
+  liveBuf.push({ ts: d.ts, bpm: d.bpm > 0 ? d.bpm : null, temp: d.tempValid ? d.temperature : null });
+  liveBuf = liveBuf.filter((p) => Date.now() - p.ts < (LIVE_WINDOW_S + 10) * 1000);
+}
+function drawLive(){
+  if(!charts) return;
+  const now = Date.now();
+  const pts = (k) => liveBuf.map((p) => ({ x: (p.ts - now) / 1000, y: p[k] }));
+  charts.hr.data.datasets[0].data  = pts("bpm");
+  charts.tmp.data.datasets[0].data = pts("temp");
+  charts.hr.update("none"); charts.tmp.update("none");
+}
+function drawHistory(){
+  if(!charts) return;
+  const c = charts.hist, rows = histRows;
+  c.data.datasets[0].data = rows.map((r) => ({ x: r.ts, y: r.bpm > 0 ? r.bpm : null }));
+  c.data.datasets[1].data = rows.map((r) => ({ x: r.ts, y: r.temperature != null ? Number(r.temperature) : null }));
+  c.data.datasets[0].hidden = histMode === "temp";
+  c.data.datasets[1].hidden = histMode === "hr";
+  $("legHr").classList.toggle("hidden",  histMode === "temp");
+  $("legTmp").classList.toggle("hidden", histMode === "hr");
+  const y = c.options.scales.y, x = c.options.scales.x;
+  if(histMode === "temp"){ y.min = 34; y.max = 42; y.ticks.stepSize = 2; }
+  else                   { y.min = 0;  y.max = 180; y.ticks.stepSize = 60; }
+  const empty = rows.length === 0;
+  x.min = empty ? Date.now() - 10 * 3600e3 : undefined;   // khaali chart pe bhi time axis dikhe
+  x.max = empty ? Date.now() : undefined;
+  $("histEmpty").classList.toggle("hidden", !empty);
+  c.update("none");
+}
+document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === t));
+  histMode = t.dataset.mode;
+  drawHistory();
+});
+
+// ---------- live values ----------
+function render(){
+  const d = last, online = !!d && Date.now() - d.ts <= STALE_MS;
+  $("connBanner").className = "banner " + (online ? "good" : "warn");
+  $("connIcon").setAttribute("href", online ? "#i-wifi" : "#i-wifi-off");
+  setText("connTitle", online ? "Device online" : (d ? "Device offline" : "Connecting…"));
+  setText("connSub", online ? "Receiving live readings." : "Waiting for a new reading.");
+  if(!d) return;
+
+  const bpmTxt = d.bpm > 0 ? d.bpm : "--";
+  setText("bpm", bpmTxt);
+  setText("temperature", d.tempValid ? d.temperature.toFixed(1) : "--");
+  setText("tempF", d.tempValid ? (d.temperature*9/5+32).toFixed(1) : "--");
+  setText("rssi", d.rssi + " dBm");
+  setText("ip", d.ip);
+  setText("uptime", fmtUptime(d.uptime));
+  setText("updated", new Date(d.ts).toLocaleTimeString("en-GB"));
+
+  const bs = $("bpmStatus");
+  bs.innerText = nice(d.bpmStatus); bs.className = pillClass(d.bpmStatus);
+  const ts = $("tempStatus");
+  if(d.tempSim && d.tempValid){ ts.innerText = "Simulated"; ts.className = "pill sim"; }
+  else { ts.innerText = nice(d.tempStatus); ts.className = pillClass(d.tempStatus); }
+
+  $("heartIcon").className = "heart-ico" + (online && d.bpm > 0 ? " on" : "");
+
+  const msgs = [];
+  if(d.tempStatus==="FEVER") msgs.push("High temperature detected");
+  if(d.bpmStatus==="HIGH")   msgs.push("High heart rate detected");
+  if(d.bpmStatus==="LOW")    msgs.push("Low heart rate detected");
+  const alerting = online && msgs.length > 0;   // purana data alarm na kare
+  $("alert").classList.toggle("hidden", !alerting);
+  setText("alertTxt", msgs.join(" · "));
+}
+
+function tickClock(){
+  const n = new Date();
+  setText("dateTxt", n.toLocaleDateString("en-GB", { weekday: "short" }) + ", " +
+                     n.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }));
+  setText("timeTxt", n.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
+}
+
+document.querySelectorAll(".nav").forEach((a) => a.addEventListener("click", () => {
+  document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("active", b === a));
+}));
+
+// ---------- auth ----------
+let signup = false, unsubLive = null, unsubHist = null, unsubUser = null;
+
+function setMode(s){
+  signup = s;
+  setText("authTitle", s ? "Create account" : "Sign in");
+  setText("authBtn", s ? "Create account" : "Sign in");
+  setText("authToggle", s ? "Have an account? Sign in" : "New here? Create account");
+  $("password").autocomplete = s ? "new-password" : "current-password";
+  setText("authErr", "");
+}
+$("authToggle").onclick = () => setMode(!signup);
+const authErr = (e) => setText("authErr", (e.code || "error").replace("auth/", "").replace(/-/g, " "));
+
+$("authBtn").onclick = async () => {
+  setText("authErr", "");
+  try {
+    const fn = signup ? createUserWithEmailAndPassword : signInWithEmailAndPassword;
+    await fn(auth, $("email").value.trim(), $("password").value);
+  } catch (e) { authErr(e); }
+};
+$("password").addEventListener("keydown", (e) => { if(e.key === "Enter") $("authBtn").click(); });
+
+$("resetBtn").onclick = async () => {
+  try { await sendPasswordResetEmail(auth, $("email").value.trim()); setText("authErr", "Reset email sent (check spam)."); }
+  catch (e) { authErr(e); }
+};
+$("googleBtn").onclick = async () => {
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (e) { authErr(e); }
+};
+$("signOut").onclick = () => signOut(auth);
+
+// ---------- emergency contacts (list) ----------
+// users/{uid}/emergencyEmails/{pushId} = email; purana single users/{uid}/emergencyEmail bhi list me dikhta hai
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+let contacts = [];   // [{ key, email }]  key null = purana emergencyEmail field
+let msgTimer = null;
+function say(cls, text){
+  const m = $("emergMsg");
+  m.className = "msg " + cls; m.innerText = text;
+  clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.innerText = ""; }, 3000);
+}
+function drawContacts(){
+  const ul = $("contactList");
+  ul.innerHTML = "";
+  contacts.forEach((c) => {
+    const li = document.createElement("li");
+    li.innerHTML = '<svg class="i"><use href="#i-mail"/></svg><span></span><button class="remove" aria-label="Remove contact" title="Remove">&times;</button>';
+    li.querySelector("span").textContent = c.email;   // textContent: DB data HTML na bane
+    li.querySelector("button").onclick = () => removeContact(c);
+    ul.appendChild(li);
+  });
+  $("contactEmpty").classList.toggle("hidden", contacts.length > 0);
+}
+async function removeContact(c){
+  const base = "users/" + auth.currentUser.uid;
+  try { await remove(ref(db, c.key ? base + "/emergencyEmails/" + c.key : base + "/emergencyEmail")); say("ok", "Contact removed."); }
+  catch (e) { say("bad", "Could not remove. Try again."); }
+}
+$("saveEmerg").onclick = async () => {
+  const v = $("emerg").value.trim().toLowerCase();
+  if (!EMAIL_RE.test(v)) return say("bad", "Enter a valid email address.");
+  if (contacts.some((c) => c.email.toLowerCase() === v)) return say("bad", "This contact is already in the list.");
+  try {
+    await push(ref(db, "users/" + auth.currentUser.uid + "/emergencyEmails"), v);
+    $("emerg").value = "";
+    say("ok", "Contact saved.");
+  } catch (e) { say("bad", "Could not save. Try again."); }
+};
+$("emerg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveEmerg").click(); });
+
+onAuthStateChanged(auth, async (user) => {
+  if (unsubLive) { unsubLive(); unsubLive = null; }
+  if (unsubHist) { unsubHist(); unsubHist = null; }
+  if (unsubUser) { unsubUser(); unsubUser = null; }
+  $("authBox").classList.toggle("hidden", !!user);
+  $("app").classList.toggle("hidden", !user);
+  if (!user) { last = null; liveBuf = []; histRows = []; return; }
+
+  const email = user.email || "";
+  const name  = user.displayName || email.split("@")[0] || "User";
+  setText("userName", name);
+  setText("who", email);
+  setText("avatar", name.charAt(0).toUpperCase());
+  if (!charts) charts = makeCharts();
+
+  unsubUser = onValue(ref(db, "users/" + user.uid), (snap) => {
+    const u = snap.val() || {};
+    contacts = [];
+    if (u.emergencyEmail) contacts.push({ key: null, email: u.emergencyEmail });
+    Object.entries(u.emergencyEmails || {}).forEach(([k, e]) => contacts.push({ key: k, email: e }));
+    drawContacts();
+  }, () => { contacts = []; drawContacts(); });
+
+  unsubLive = onValue(ref(db, "live"), (snap) => { last = snap.val(); pushLive(last); render(); drawLive(); });
+  unsubHist = onValue(query(ref(db, "history"), limitToLast(HISTORY_ROWS)), (snap) => {
+    const rows = [];
+    snap.forEach((c) => { rows.push(c.val()); });   // oldest -> newest
+    histRows = rows;
+    drawHistory();
+  }, () => { histRows = []; drawHistory(); });
+});
+
+tickClock();
+setInterval(() => { render(); drawLive(); tickClock(); }, 1000);   // staleness + sliding 60 s window
+</script>
+
+</body>
+</html>

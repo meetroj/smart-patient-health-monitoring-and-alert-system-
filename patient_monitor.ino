@@ -1,12 +1,14 @@
 /*
   ============================================================
-   ESP8266 PATIENT MONITORING SYSTEM  (Final Version)
+   ESP32 PATIENT MONITORING SYSTEM  (Final Version)
   ============================================================
    Hardware:
-     - NodeMCU ESP8266
-     - LM35 temperature sensor  -> A0
-         (LM35 VCC ko VIN/5V se do, GND common, OUT -> A0)
-     - Digital pulse sensor     -> D0 (GPIO16)
+     - ESP32 DevKit (30 pin)
+     - LM35DT temperature sensor -> D35 (GPIO35)
+         (LM35 +Vs ko VIN/5V se do, GND common, OUT -> D35)
+     - Analog PulseSensor (S, +, -) -> D34 (GPIO34)
+         (+ ko 3V3 se do, - GND, S -> D34)
+     - D34/D35 dono ADC1 pins hain (ADC2 WiFi ke saath kaam nahi karta)
 
    Open in browser:  http://<ESP-IP>/   ya   http://patientmonitor.local/
 
@@ -15,31 +17,65 @@
   ============================================================
 */
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <WebServer.h>
+  #include <ESPmDNS.h>
+  #include <HTTPClient.h>
+#else   // ESP8266 (NodeMCU ESP-12E)
+  #include <ESP8266WiFi.h>
+  #include <ESP8266WebServer.h>
+  #include <ESP8266mDNS.h>
+  #include <ESP8266HTTPClient.h>
+#endif
+#include <WiFiClientSecure.h>
+#include <Ticker.h>
 
 // =====================================================
 // SETTINGS  (yahan sirf apna data badlo)
 // =====================================================
 
-const char* WIFI_SSID     = "YOUR_WIFI_NAME";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// Firebase Realtime Database (cloud dashboard ke liye)
+const char* FIREBASE_URL     = "https://patient-76db1-default-rtdb.firebaseio.com/live.json";
+const unsigned long FIREBASE_PUSH_MS = 2000;
+
+const char* WIFI_SSID     = "Meet";
+const char* WIFI_PASSWORD = "meettroj";
 const char* HOST_NAME     = "patientmonitor";   // http://patientmonitor.local
 
-#define LM35_PIN   A0
-#define PULSE_PIN  D0
+#if defined(ESP32)
+  #define PULSE_PIN  34      // D34 (ADC1)
+  #define LM35_PIN   35      // D35 (ADC1)
+  #define HAS_TEMP   1
+  #define ADC_MAX    4095
+#else
+  // ESP8266 me sirf ek analog pin (A0) hai -> pulse sensor yahan, temperature band
+  // (LM35 ke liye ADS1115 / DS18B20 / ESP32 chahiye)
+  #define PULSE_PIN  A0
+  #define HAS_TEMP   0
+  #define ADC_MAX    1023
+#endif
 
-const float TEMP_OFFSET_C = 0.0;     // calibration: thermometer se compare karke adjust karo
+// Calibration: Serial Monitor me "LM35 mV" dekho, real thermometer se compare karo.
+// Do points lo (T1,shown1) (T2,shown2): GAIN = (T2-T1)/(shown2-shown1), phir OFFSET se baseline match karo.
+const float TEMP_GAIN     = 1.0;
+const float TEMP_OFFSET_C = 0.0;
 
-// Pulse settings
-const unsigned long MIN_BEAT_GAP_MS   = 300;    // 200 BPM se tez beat ignore
+// Real LM35 nahi hai to temperature simulated dikhao (dashboard pe "SIMULATED" tag lagta hai)
+const bool TEMP_SIMULATED = true;
+#define TEMP_IS_SIM  (!HAS_TEMP && TEMP_SIMULATED)
+
+// Pulse settings (analog PulseSensor)
+const float         PULSE_MIN_AMPLITUDE = 8;     // beat wave ka peak (10-bit counts). Is se kam = finger nahi. Chhota = zyada sensitive
+const unsigned long PULSE_SAMPLE_MS     = 20;    // 50 Hz
+const unsigned long MIN_BEAT_GAP_MS   = 400;    // 150 BPM se tez beat ignore (dicrotic notch / noise)
 const unsigned long MAX_BEAT_GAP_MS   = 2000;   // 30 BPM se slow beat = invalid
 const unsigned long NO_PULSE_TIMEOUT  = 3000;   // itne ms beat nahi mili -> finger hata hai
-const int           BPM_AVG_COUNT     = 5;      // last 5 beats ka average
+const int           BPM_AVG_COUNT     = 9;      // last 9 beats ka median (miss hui beat se BPM nahi girta)
+const int           BPM_MIN_BEATS     = 3;      // itni beats ke baad hi BPM dikhao (touch ke jhatke ignore)
 
 // Temperature settings
-const int           TEMP_SAMPLES      = 16;     // ek reading = 16 samples ka average
+const int           TEMP_SAMPLES      = 64;     // ADC noisy hai, zyada samples = stable
 const unsigned long TEMP_INTERVAL_MS  = 250;
 const float         TEMP_SMOOTHING    = 0.2;    // 0-1, chhota = zyada smooth
 
@@ -50,10 +86,22 @@ const unsigned long WIFI_CHECK_MS     = 10000;
 // GLOBALS
 // =====================================================
 
+#if defined(ESP32)
+WebServer server(80);
+#else
 ESP8266WebServer server(80);
+#endif
 
 float temperatureC = 0.0;
 bool  tempValid    = false;
+float lastRawMv    = 0.0;   // LM35 pin ka average millivolt (debug)
+
+// Pulse waveform state
+float pulseBase = 0;        // slow baseline (DC)
+float pulseSmooth = 0;      // baseline-removed, smoothed wave
+float pulseAmp = 0;         // decaying peak of pulseSmooth
+Ticker pulseTicker;               // pulse sampling timer pe: Firebase push (~3 s network wait) ke dauran bhi chalta hai
+unsigned long lastBeatSeen = 0;   // koi bhi beat (timeout ke liye); lastBeatTime sirf interval ke liye
 
 int  bpm            = 0;
 bool fingerPresent  = false;
@@ -67,30 +115,82 @@ int           bpmIndex     = 0;
 unsigned long lastTempRead   = 0;
 unsigned long lastWifiCheck  = 0;
 unsigned long lastSerialLog  = 0;
+unsigned long lastFirebasePush = 0;
+
+// GTS Root R1 (Google Trust Services) - Firebase ka TLS root. Google rotate kare to naya PEM yahan daalo.
+static const char GTS_ROOT_R1[] = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIFYjCCBEqgAwIBAgIQd70NbNs2+RrqIQ/E8FjTDTANBgkqhkiG9w0BAQsFADBX
+MQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2lnbiBudi1zYTEQMA4GA1UE
+CxMHUm9vdCBDQTEbMBkGA1UEAxMSR2xvYmFsU2lnbiBSb290IENBMB4XDTIwMDYx
+OTAwMDA0MloXDTI4MDEyODAwMDA0MlowRzELMAkGA1UEBhMCVVMxIjAgBgNVBAoT
+GUdvb2dsZSBUcnVzdCBTZXJ2aWNlcyBMTEMxFDASBgNVBAMTC0dUUyBSb290IFIx
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAthECix7joXebO9y/lD63
+ladAPKH9gvl9MgaCcfb2jH/76Nu8ai6Xl6OMS/kr9rH5zoQdsfnFl97vufKj6bwS
+iV6nqlKr+CMny6SxnGPb15l+8Ape62im9MZaRw1NEDPjTrETo8gYbEvs/AmQ351k
+KSUjB6G00j0uYODP0gmHu81I8E3CwnqIiru6z1kZ1q+PsAewnjHxgsHA3y6mbWwZ
+DrXYfiYaRQM9sHmklCitD38m5agI/pboPGiUU+6DOogrFZYJsuB6jC511pzrp1Zk
+j5ZPaK49l8KEj8C8QMALXL32h7M1bKwYUH+E4EzNktMg6TO8UpmvMrUpsyUqtEj5
+cuHKZPfmghCN6J3Cioj6OGaK/GP5Afl4/Xtcd/p2h/rs37EOeZVXtL0m79YB0esW
+CruOC7XFxYpVq9Os6pFLKcwZpDIlTirxZUTQAs6qzkm06p98g7BAe+dDq6dso499
+iYH6TKX/1Y7DzkvgtdizjkXPdsDtQCv9Uw+wp9U7DbGKogPeMa3Md+pvez7W35Ei
+Eua++tgy/BBjFFFy3l3WFpO9KWgz7zpm7AeKJt8T11dleCfeXkkUAKIAf5qoIbap
+sZWwpbkNFhHax2xIPEDgfg1azVY80ZcFuctL7TlLnMQ/0lUTbiSw1nH69MG6zO0b
+9f6BQdgAmD06yK56mDcYBZUCAwEAAaOCATgwggE0MA4GA1UdDwEB/wQEAwIBhjAP
+BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTkrysmcRorSCeFL1JmLO/wiRNxPjAf
+BgNVHSMEGDAWgBRge2YaRQ2XyolQL30EzTSo//z9SzBgBggrBgEFBQcBAQRUMFIw
+JQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnBraS5nb29nL2dzcjEwKQYIKwYBBQUH
+MAKGHWh0dHA6Ly9wa2kuZ29vZy9nc3IxL2dzcjEuY3J0MDIGA1UdHwQrMCkwJ6Al
+oCOGIWh0dHA6Ly9jcmwucGtpLmdvb2cvZ3NyMS9nc3IxLmNybDA7BgNVHSAENDAy
+MAgGBmeBDAECATAIBgZngQwBAgIwDQYLKwYBBAHWeQIFAwIwDQYLKwYBBAHWeQIF
+AwMwDQYJKoZIhvcNAQELBQADggEBADSkHrEoo9C0dhemMXoh6dFSPsjbdBZBiLg9
+NR3t5P+T4Vxfq7vqfM/b5A3Ri1fyJm9bvhdGaJQ3b2t6yMAYN/olUazsaL+yyEn9
+WprKASOshIArAoyZl+tJaox118fessmXn1hIVw41oeQa1v1vg4Fv74zPl6/AhSrw
+9U5pCZEt4Wi4wStz6dTZ/CLANx8LZh1J7QJVj2fhMtfTJr9w4z30Z209fOU0iOMy
++qduBmpvvYuR7hZL6Dupszfnw0Skfths18dG9ZKb59UhvmaSGZRVbNQpsg3BZlvi
+d0lIKO2d1xozclOzgjXPYovJJIultzkMu34qQb9Sz/yilrbCgj8=
+-----END CERTIFICATE-----
+)EOF";
+#if !defined(ESP32)
+BearSSL::X509List fbTrust(GTS_ROOT_R1);
+BearSSL::Session  fbSession;   // TLS session resume: handshake (3+ s, pulse sampling rukti thi) skip hota hai
+#endif
+
+WiFiClientSecure fbClient;   // global + setReuse = TLS connection reused, push ~100ms (pulse sampling block nahi hota)
 
 // =====================================================
 // TEMPERATURE (LM35)
 // =====================================================
 
+#if HAS_TEMP
 float readTemperatureOnce()
 {
   long sum = 0;
   for (int i = 0; i < TEMP_SAMPLES; i++)
   {
-    sum += analogRead(LM35_PIN);
+    sum += analogReadMilliVolts(LM35_PIN);   // ESP32 factory-calibrated mV
     delayMicroseconds(200);
   }
-  float raw     = sum / (float)TEMP_SAMPLES;
-
-  // NodeMCU A0 = 0-3.3V -> 0-1023
-  float voltage = (raw / 1023.0) * 3.3;
+  lastRawMv = sum / (float)TEMP_SAMPLES;
 
   // LM35 = 10 mV per degree C
-  return (voltage * 100.0) + TEMP_OFFSET_C;
+  return (lastRawMv / 10.0) * TEMP_GAIN + TEMP_OFFSET_C;
 }
+#endif
 
 void updateTemperature()
 {
+#if !HAS_TEMP
+  // ESP8266: A0 pulse sensor ke paas hai, LM35 nahi -> demo ke liye random walk 36.2-37.0 C
+  if (!TEMP_SIMULATED) { tempValid = false; return; }
+  unsigned long now = millis();
+  if (now - lastTempRead < 2000) return;
+  lastTempRead = now;
+  if (!tempValid) temperatureC = 36.6;
+  temperatureC += random(-10, 11) / 100.0;                // +-0.10 C step
+  temperatureC = constrain(temperatureC, 36.2, 37.0);
+  tempValid = true;
+#else
   unsigned long now = millis();
   if (now - lastTempRead < TEMP_INTERVAL_MS) return;
   lastTempRead = now;
@@ -108,6 +208,7 @@ void updateTemperature()
   else temperatureC += TEMP_SMOOTHING * (t - temperatureC); // exponential smoothing
 
   tempValid = true;
+#endif
 }
 
 // =====================================================
@@ -120,9 +221,12 @@ void addBpmSample(int value)
   bpmIndex = (bpmIndex + 1) % BPM_AVG_COUNT;
   if (bpmCount < BPM_AVG_COUNT) bpmCount++;
 
-  long sum = 0;
-  for (int i = 0; i < bpmCount; i++) sum += bpmHistory[i];
-  bpm = sum / bpmCount;
+  // Median of last beats (mean nahi): ek galat beat se BPM nahi uchhalta
+  int tmp[BPM_AVG_COUNT];
+  for (int i = 0; i < bpmCount; i++) tmp[i] = bpmHistory[i];
+  for (int i = 1; i < bpmCount; i++)
+    for (int j = i; j > 0 && tmp[j] < tmp[j - 1]; j--) { int t = tmp[j]; tmp[j] = tmp[j - 1]; tmp[j - 1] = t; }
+  bpm = bpmCount >= BPM_MIN_BEATS ? tmp[bpmCount / 2] : 0;
 }
 
 void resetBpm()
@@ -136,13 +240,30 @@ void resetBpm()
 
 void readPulse()
 {
-  bool signal = digitalRead(PULSE_PIN);
   unsigned long now = millis();
 
-  // Rising edge = new beat
-  if (signal == HIGH && !pulseState)
+  bool signal = pulseState;
+
+  // 50 Hz (Ticker se call hota hai). Slow baseline hataya (finger ka DC drift), phir bacha hua beat wave detect hota hai
+  {
+    int raw = analogRead(PULSE_PIN);
+    if (pulseBase == 0) pulseBase = raw;
+    pulseBase += (fabs(raw - pulseBase) > 60 ? 0.3 : 0.04) * (raw - pulseBase);   // touch/spike pe baseline jaldi sambhalta hai
+    float hp = constrain(raw - pulseBase, -100.0, 100.0) * (1023.0 / ADC_MAX);   // 10-bit units, touch spikes clamp
+    pulseSmooth += 0.25 * (hp - pulseSmooth);
+    pulseAmp = max(pulseSmooth, pulseAmp * 0.99f);                                // decaying peak = signal size
+
+    float thr = max(5.0f, 0.3f * pulseAmp);
+    if (pulseAmp < PULSE_MIN_AMPLITUDE)  signal = false;       // flat line = finger nahi
+    else if (pulseSmooth > thr)          signal = true;
+    else if (pulseSmooth < thr * 0.5f)   signal = false;       // hysteresis: ek beat = ek hi crossing
+  }
+
+  // Rising crossing = new beat
+  if (signal && !pulseState)
   {
     pulseState = true;
+    lastBeatSeen = now;
 
     if (lastBeatTime == 0)
     {
@@ -154,7 +275,7 @@ void readPulse()
 
       if (interval >= MIN_BEAT_GAP_MS && interval <= MAX_BEAT_GAP_MS)
       {
-        addBpmSample(60000UL / interval);
+        addBpmSample(60000UL / interval);   // median lena outlier beats ko khud hata deta hai
         fingerPresent = true;
         lastBeatTime = now;
       }
@@ -168,10 +289,10 @@ void readPulse()
     }
   }
 
-  if (signal == LOW) pulseState = false;
+  if (!signal) pulseState = false;
 
   // Timeout: kaafi der se beat nahi mili
-  if (lastBeatTime > 0 && (now - lastBeatTime) > NO_PULSE_TIMEOUT)
+  if (bpm > 0 && (now - lastBeatSeen) > NO_PULSE_TIMEOUT)
   {
     resetBpm();
   }
@@ -191,7 +312,7 @@ const char* bpmStatus()
 
 const char* tempStatus()
 {
-  if (!tempValid)          return "NO SENSOR";
+  if (!tempValid)          return TEMP_IS_SIM ? "NO SIGNAL" : "NO SENSOR";
   if (temperatureC < 35.0) return "LOW";
   if (temperatureC >= 38.0) return "FEVER";
   if (temperatureC >= 37.5) return "ELEVATED";
@@ -282,7 +403,7 @@ background:#fee2e2;color:#b91c1c;font-weight:bold;text-align:center}
     </div>
 
     <div class="card">
-      <div class="title">BODY TEMPERATURE</div>
+      <div class="title" id="tempTitle">BODY TEMPERATURE</div>
       <div class="value temp">
         <span id="temperature">--</span>
         <span class="unit">&deg;C</span>
@@ -298,7 +419,7 @@ background:#fee2e2;color:#b91c1c;font-weight:bold;text-align:center}
     <div class="row"><span>Temperature</span><strong><span id="temperature2">--</span> &deg;C</strong></div>
     <div class="row"><span>Temperature (&deg;F)</span><strong><span id="tempF">--</span> &deg;F</strong></div>
     <div class="row"><span>Wi-Fi Signal</span><strong id="rssi">--</strong></div>
-    <div class="row"><span>ESP8266 IP</span><strong id="ip">--</strong></div>
+    <div class="row"><span>Device IP</span><strong id="ip">--</strong></div>
     <div class="row"><span>Uptime</span><strong id="uptime">--</strong></div>
     <div class="row"><span>Last Update</span><strong id="updated">--</strong></div>
   </div>
@@ -342,6 +463,7 @@ function updateData(){
 
     setText("bpm", bpmTxt);
     setText("bpm2", bpmTxt);
+    setText("tempTitle", d.tempSim ? "BODY TEMPERATURE (SIMULATED)" : "BODY TEMPERATURE");
     setText("temperature", tempTxt);
     setText("temperature2", tempTxt);
     setText("tempF", tempF);
@@ -400,13 +522,14 @@ void handleData()
 
   snprintf(json, sizeof(json),
     "{\"bpm\":%d,\"temperature\":%.2f,\"tempValid\":%s,"
-    "\"bpmStatus\":\"%s\",\"tempStatus\":\"%s\","
+    "\"bpmStatus\":\"%s\",\"tempStatus\":\"%s\",\"tempSim\":%s,"
     "\"rssi\":%d,\"ip\":\"%s\",\"uptime\":%lu}",
     bpm,
     temperatureC,
     tempValid ? "true" : "false",
     bpmStatus(),
     tempStatus(),
+    TEMP_IS_SIM ? "true" : "false",
     WiFi.RSSI(),
     WiFi.localIP().toString().c_str(),
     millis() / 1000UL
@@ -427,8 +550,13 @@ void handleNotFound()
 
 void connectWiFi()
 {
+#if defined(ESP32)
+  WiFi.setHostname(HOST_NAME);   // ESP32: mode() se pehle
+  WiFi.mode(WIFI_STA);
+#else
   WiFi.mode(WIFI_STA);
   WiFi.hostname(HOST_NAME);
+#endif
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -446,7 +574,7 @@ void connectWiFi()
   if (WiFi.status() == WL_CONNECTED)
   {
     Serial.println("WiFi Connected!");
-    Serial.print("ESP8266 IP Address: ");
+    Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
   }
   else
@@ -470,6 +598,39 @@ void checkWiFi()
 }
 
 // =====================================================
+// FIREBASE PUSH
+// =====================================================
+
+void pushToFirebase()
+{
+  unsigned long now = millis();
+  if (now - lastFirebasePush < FIREBASE_PUSH_MS) return;
+  lastFirebasePush = now;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (time(nullptr) < 1700000000) return;   // NTP sync nahi hua = cert date check fail hoga
+
+  char json[400];
+  snprintf(json, sizeof(json),
+    "{\"bpm\":%d,\"temperature\":%.2f,\"tempValid\":%s,"
+    "\"bpmStatus\":\"%s\",\"tempStatus\":\"%s\",\"tempSim\":%s,"
+    "\"rssi\":%d,\"ip\":\"%s\",\"uptime\":%lu,\"ts\":{\".sv\":\"timestamp\"}}",
+    bpm, temperatureC, tempValid ? "true" : "false",
+    bpmStatus(), tempStatus(), TEMP_IS_SIM ? "true" : "false",
+    WiFi.RSSI(), WiFi.localIP().toString().c_str(), millis() / 1000UL
+  );
+
+  HTTPClient http;
+  http.setReuse(true);
+  http.setTimeout(3000);
+  if (http.begin(fbClient, FIREBASE_URL))
+  {
+    int code = http.PUT(json);   // ~3 s (network); pulse Ticker is dauran bhi sample karta hai
+    if (code != 200) Serial.printf("Firebase push failed: %d\n", code);
+    http.end();
+  }
+}
+
+// =====================================================
 // SETUP
 // =====================================================
 
@@ -484,8 +645,22 @@ void setup()
   Serial.println("==============================");
 
   pinMode(PULSE_PIN, INPUT);
+#if defined(ESP32)
+  pinMode(LM35_PIN, INPUT);
+  fbClient.setCACert(GTS_ROOT_R1);   // Firebase cert validate hota hai (insecure mode nahi)
+#else
+  system_update_cpu_freq(SYS_CPU_160MHZ);   // TLS/crypto ~2x tez
+  fbClient.setTrustAnchors(&fbTrust);
+  fbClient.setSession(&fbSession);
+#endif
 
   connectWiFi();
+  randomSeed(micros() + WiFi.RSSI());
+
+  // TLS cert validity ke liye sahi time chahiye
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  for (int i = 0; i < 20 && time(nullptr) < 1700000000; i++) delay(500);
+  Serial.println(time(nullptr) < 1700000000 ? "NTP sync failed - Firebase push paused" : "Time synced (NTP)");
 
   if (MDNS.begin(HOST_NAME))
   {
@@ -502,6 +677,8 @@ void setup()
 
   Serial.println("Web Server Started");
   Serial.println("Open the IP address in browser");
+
+  pulseTicker.attach_ms(PULSE_SAMPLE_MS, readPulse);
 }
 
 // =====================================================
@@ -511,18 +688,21 @@ void setup()
 void loop()
 {
   updateTemperature();
-  readPulse();
 
   server.handleClient();
+#if !defined(ESP32)
   MDNS.update();
+#endif
   checkWiFi();
+  pushToFirebase();
 
   // Serial monitor log har 2 second
   if (millis() - lastSerialLog >= 2000)
   {
     lastSerialLog = millis();
-    Serial.printf("BPM: %d (%s) | Temp: %.2f C (%s)\n",
-                  bpm, bpmStatus(), temperatureC, tempStatus());
+    Serial.printf("BPM: %d (%s) | Temp: %.2f C (%s) | pulse peak: %d (min %d)\n",
+                  bpm, bpmStatus(), temperatureC, tempStatus(),
+                  (int)pulseAmp, (int)PULSE_MIN_AMPLITUDE);
   }
 
   delay(2);

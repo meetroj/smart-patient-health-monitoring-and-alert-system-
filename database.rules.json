@@ -1,0 +1,27 @@
+{
+  "rules": {
+    "live": {
+      ".read": "auth != null",
+      ".write": true,
+      ".validate": "newData.hasChildren(['bpm','temperature','ts'])"
+    },
+    "users": {
+      ".read": "auth != null && auth.uid === 'p7qce7YmP9QTY94GGSgJiUQ5NMJ3'",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "emergencyEmail": {
+          ".validate": "newData.isString() && newData.val().matches(/^[^@ ]+@[^@ ]+[.][^@ ]+$/)"
+        }
+      }
+    },
+    "alertState": {
+      ".read": "auth != null && auth.uid === 'p7qce7YmP9QTY94GGSgJiUQ5NMJ3'",
+      ".write": "auth != null && auth.uid === 'p7qce7YmP9QTY94GGSgJiUQ5NMJ3'"
+    },
+    "history": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.uid === 'p7qce7YmP9QTY94GGSgJiUQ5NMJ3'"
+    }
+  }
+}
